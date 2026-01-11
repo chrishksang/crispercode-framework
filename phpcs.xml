@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<ruleset name="CrisperCode Framework Coding Standard">
+    <description>Coding standard for CrisperCode Framework based on PSR-12</description>
+
+    <!-- Use PSR-12 as the base standard -->
+    <rule ref="PSR12"/>
+
+    <!-- Paths to check -->
+    <file>src</file>
+    <file>tests</file>
+
+    <!-- Exclude vendor directory -->
+    <exclude-pattern>*/vendor/*</exclude-pattern>
+
+    <!-- Show progress -->
+    <arg value="p"/>
+
+    <!-- Show sniff codes in all reports -->
+    <arg value="s"/>
+
+    <!-- Use colors in output -->
+    <arg name="colors"/>
+
+    <!-- Only check PHP files -->
+    <arg name="extensions" value="php"/>
+
+    <!-- Check in parallel for better performance -->
+    <arg name="parallel" value="75"/>
+</ruleset>
