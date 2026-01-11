@@ -2,3 +2,6 @@
 composer.lock
 .phpunit.cache/
 .phpcs-cache
+
+# Local dev script (not committed)
+/dev
