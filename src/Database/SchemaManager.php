@@ -397,7 +397,9 @@ class SchemaManager
         // For SQLite with AUTOINCREMENT, PRIMARY KEY is already in column definition
         // For PostgreSQL with SERIAL, PRIMARY KEY is already in column definition
         // For MySQL, or SQLite without AUTOINCREMENT, add separate PRIMARY KEY constraint
-        if ($pk !== null && !($this->isSQLite() && $pkHasAutoIncrement) && !($this->isPostgreSQL() && $pkHasAutoIncrement)) {
+        $sqliteAutoInc = $this->isSQLite() && $pkHasAutoIncrement;
+        $postgresAutoInc = $this->isPostgreSQL() && $pkHasAutoIncrement;
+        if ($pk !== null && !$sqliteAutoInc && !$postgresAutoInc) {
             $lines[] = "PRIMARY KEY (`$pk`)";
         }
 
@@ -569,9 +571,12 @@ class SchemaManager
         } elseif (in_array($type, ['VARCHAR', 'CHAR', 'VARBINARY', 'BINARY'], true) && $def['length']) {
             // Handle VARCHAR, CHAR, VARBINARY, and BINARY with length
             $type .= '(' . $def['length'] . ')';
-        } elseif (in_array($type, ['INT', 'TINYINT', 'SMALLINT', 'MEDIUMINT', 'BIGINT'], true) && $def['length'] && $this->isMySQL()) {
+        } elseif ($def['length'] && $this->isMySQL()) {
             // Handle integer types with display width (MySQL only, not used in PostgreSQL/SQLite)
-            $type .= '(' . $def['length'] . ')';
+            $intTypes = ['INT', 'TINYINT', 'SMALLINT', 'MEDIUMINT', 'BIGINT'];
+            if (in_array($type, $intTypes, true)) {
+                $type .= '(' . $def['length'] . ')';
+            }
         }
 
         $sql = '`' . $def['name'] . '` ' . $type;

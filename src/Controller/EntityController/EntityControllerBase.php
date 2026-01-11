@@ -41,7 +41,7 @@ abstract class EntityControllerBase
     {
         return [
             'current_path' => $request->getUri()->getPath(),
-            'date' => date('Y-m-d H:i:s', REQUEST_TIME),
+            'date' => date('Y-m-d H:i:s', (int) ($_SERVER['REQUEST_TIME'] ?? time())),
             'flash_messages' => $this->flashMessages->getAndClear(),
         ];
     }

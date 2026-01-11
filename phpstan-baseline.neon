@@ -1,0 +1,85 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Call to an undefined method CrisperCode\\Cache\\CacheBackendInterface\:\:expects\(\)\.$#'
+			identifier: method.notFound
+			count: 5
+			path: tests/Cache/CacheTest.php
+
+		-
+			message: '#^Call to an undefined method MeekroDB\:\:expects\(\)\.$#'
+			identifier: method.notFound
+			count: 5
+			path: tests/Cache/DatabaseCacheBackendTest.php
+
+		-
+			message: '#^Call to an undefined method MeekroDB\:\:method\(\)\.$#'
+			identifier: method.notFound
+			count: 6
+			path: tests/Console/Command/SchemaSyncCommandTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertIsArray\(\) with array will always evaluate to true\.$#'
+			identifier: method.alreadyNarrowedType
+			count: 1
+			path: tests/Console/EntityProvider/FrameworkEntityProviderTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertNotNull\(\) with MeekroDB will always evaluate to true\.$#'
+			identifier: method.alreadyNarrowedType
+			count: 3
+			path: tests/Database/MultiDatabaseIntegrationTest.php
+
+		-
+			message: '#^Access to an undefined property CrisperCode\\Entity\\EntityBase\:\:\$camelCaseProperty\.$#'
+			identifier: property.notFound
+			count: 3
+			path: tests/Entity/EntityBaseTest.php
+
+		-
+			message: '#^Access to an undefined property CrisperCode\\Entity\\EntityBase\:\:\$customProperty\.$#'
+			identifier: property.notFound
+			count: 4
+			path: tests/Entity/EntityBaseTest.php
+
+		-
+			message: '#^Access to an undefined property CrisperCode\\Entity\\EntityBase\:\:\$name\.$#'
+			identifier: property.notFound
+			count: 5
+			path: tests/Entity/EntityBaseTest.php
+
+		-
+			message: '#^Access to an undefined property CrisperCode\\Entity\\EntityBase\:\:\$nonPersistedProperty\.$#'
+			identifier: property.notFound
+			count: 1
+			path: tests/Entity/EntityBaseTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertIsBool\(\) with false will always evaluate to true\.$#'
+			identifier: method.alreadyNarrowedType
+			count: 1
+			path: tests/EntityManager/KeyValueManagerTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertIsBool\(\) with true will always evaluate to true\.$#'
+			identifier: method.alreadyNarrowedType
+			count: 1
+			path: tests/EntityManager/KeyValueManagerTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertIsFloat\(\) with 3\.14 will always evaluate to true\.$#'
+			identifier: method.alreadyNarrowedType
+			count: 1
+			path: tests/EntityManager/KeyValueManagerTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertIsInt\(\) with 42 will always evaluate to true\.$#'
+			identifier: method.alreadyNarrowedType
+			count: 1
+			path: tests/EntityManager/KeyValueManagerTest.php
+
+		-
+			message: '#^Negated boolean expression is always true\.$#'
+			identifier: booleanNot.alwaysTrue
+			count: 3
+			path: tests/File/FileManagerTest.php

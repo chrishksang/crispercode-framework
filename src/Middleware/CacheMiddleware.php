@@ -45,7 +45,7 @@ class CacheMiddleware implements MiddlewareInterface
         $cacheKey = $this->getCacheKey($request);
         $cached = $this->cache->get($cacheKey);
         $expiry = $request->getAttribute('cache_expiry', self::DEFAULT_EXPIRY);
-        $lastModified = $request->getAttribute('cache_last_modified', REQUEST_TIME);
+        $lastModified = $request->getAttribute('cache_last_modified', (int) ($_SERVER['REQUEST_TIME'] ?? time()));
 
         if ($cached !== null) {
             $etag = $this->buildEtag($cached);

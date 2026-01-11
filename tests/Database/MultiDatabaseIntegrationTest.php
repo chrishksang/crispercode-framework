@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace Tests\CrisperCode\Database;
 
 use CrisperCode\Attribute\Column;
-use CrisperCode\Attribute\Index;
 use CrisperCode\Config\FrameworkConfig;
 use CrisperCode\Database\DatabaseFactory;
 use CrisperCode\Database\SchemaManager;
 use CrisperCode\Entity\EntityBase;
 use PHPUnit\Framework\TestCase;
+use Tests\CrisperCode\Fixtures\TestUser;
 
 /**
  * Integration tests for multi-database support.
@@ -18,24 +18,6 @@ use PHPUnit\Framework\TestCase;
  * These tests verify that the framework can actually work with different
  * database drivers, not just create connections.
  */
-#[Index(columns: ['email'], unique: true)]
-class TestUser extends EntityBase
-{
-    public const TABLE_NAME = 'test_users';
-
-    #[Column(type: 'VARCHAR', length: 255)]
-    public string $email;
-
-    #[Column(type: 'VARCHAR', length: 100)]
-    public string $name;
-
-    #[Column(type: 'INT', nullable: true)]
-    public ?int $age = null;
-
-    #[Column(type: 'DATETIME')]
-    public string $createdAt;
-}
-
 class MultiDatabaseIntegrationTest extends TestCase
 {
     /**

@@ -12,6 +12,14 @@
     <!-- Exclude vendor directory -->
     <exclude-pattern>*/vendor/*</exclude-pattern>
 
+    <!-- Exclude test bootstrap (has expected side effects and helper class) -->
+    <exclude-pattern>tests/bootstrap.php</exclude-pattern>
+
+    <!-- Line length warnings are informational, not errors -->
+    <rule ref="Generic.Files.LineLength">
+        <severity>0</severity>
+    </rule>
+
     <!-- Show progress -->
     <arg value="p"/>
 
