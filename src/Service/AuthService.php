@@ -518,4 +518,14 @@ class AuthService
     {
         return $_SESSION[self::SESSION_ENCRYPTION_KEY] ?? null;
     }
+
+    /**
+     * Resets the service state for the next request.
+     * Crucial for long-running processes like FrankenPHP.
+     */
+    public function resetState(): void
+    {
+        $this->currentUser = null;
+        $this->userLoaded = false;
+    }
 }
