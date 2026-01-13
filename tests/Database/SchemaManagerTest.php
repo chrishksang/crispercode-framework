@@ -717,4 +717,82 @@ class SchemaManagerTest extends TestCase
         $this->expectOutputRegex('/Creating table enum_test_pg/');
         $manager->syncTable($testEntity::class);
     }
+
+    /**
+     * Tests that SQLite converts inline ENUM type (with values in type string) to TEXT.
+     */
+    public function testSQLiteConvertsInlineEnumToText(): void
+    {
+        // Setup for SQLite
+        $dbMock = $this->createMock(MeekroDB::class);
+        $pdoMock = $this->createMock(PDO::class);
+        $dbMock->method('get')->willReturn($pdoMock);
+        $pdoMock->method('getAttribute')
+            ->with(PDO::ATTR_DRIVER_NAME)
+            ->willReturn('sqlite');
+        $manager = new SchemaManager($dbMock);
+
+        // Create a test entity with inline ENUM type (values in type string)
+        $testEntity = new class ($dbMock) extends EntityBase {
+            public const TABLE_NAME = 'inline_enum_test';
+
+            #[Column(type: "ENUM('active','inactive','pending')")]
+            public string $status;
+        };
+
+        // Table does not exist
+        $dbMock->method('queryFirstRow')
+            ->willReturn(null);
+
+        $dbMock->expects($this->once())
+            ->method('query')
+            ->with($this->callback(function (string $sql): bool {
+                // SQLite should convert inline ENUM to TEXT
+                $this->assertStringContainsString('`status` TEXT', $sql);
+                $this->assertStringNotContainsString('ENUM', $sql);
+                return true;
+            }));
+
+        $this->expectOutputRegex('/Creating table inline_enum_test/');
+        $manager->syncTable($testEntity::class);
+    }
+
+    /**
+     * Tests that PostgreSQL converts inline ENUM type (with values in type string) to TEXT.
+     */
+    public function testPostgreSQLConvertsInlineEnumToText(): void
+    {
+        // Setup for PostgreSQL
+        $dbMock = $this->createMock(MeekroDB::class);
+        $pdoMock = $this->createMock(PDO::class);
+        $dbMock->method('get')->willReturn($pdoMock);
+        $pdoMock->method('getAttribute')
+            ->with(PDO::ATTR_DRIVER_NAME)
+            ->willReturn('pgsql');
+        $manager = new SchemaManager($dbMock);
+
+        // Create a test entity with inline ENUM type (values in type string)
+        $testEntity = new class ($dbMock) extends EntityBase {
+            public const TABLE_NAME = 'inline_enum_test_pg';
+
+            #[Column(type: "ENUM('active','inactive','pending')")]
+            public string $status;
+        };
+
+        // Table does not exist
+        $dbMock->method('queryFirstRow')
+            ->willReturn(null);
+
+        $dbMock->expects($this->once())
+            ->method('query')
+            ->with($this->callback(function (string $sql): bool {
+                // PostgreSQL should convert inline ENUM to TEXT
+                $this->assertStringContainsString('`status` TEXT', $sql);
+                $this->assertStringNotContainsString('ENUM', $sql);
+                return true;
+            }));
+
+        $this->expectOutputRegex('/Creating table inline_enum_test_pg/');
+        $manager->syncTable($testEntity::class);
+    }
 }
