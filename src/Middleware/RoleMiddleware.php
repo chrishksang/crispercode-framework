@@ -12,6 +12,9 @@ use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Slim\Views\Twig;
+use Twig\Error\LoaderError;
+use Twig\Error\RuntimeError;
+use Twig\Error\SyntaxError;
 
 /**
  * Middleware that restricts access to users with specific roles.
@@ -37,8 +40,9 @@ class RoleMiddleware implements MiddlewareInterface
     /**
      * Factory method to create an instance with specific roles requirement.
      *
-     * @param array<Roles> $roles List of allowed roles.
-     * @return string Class name for DI container (if used as string) or closure?
+     * @param ServerRequestInterface $request
+     * @param RequestHandlerInterface $handler
+     * @return ResponseInterface Class name for DI container (if used as string) or closure?
      *
      * Actually, in Slim, we often instantiate middleware or use a DI key.
      * But since we need to pass strict parameters ($roles) that vary per route,
@@ -51,6 +55,9 @@ class RoleMiddleware implements MiddlewareInterface
      *
      * Let's stick to simple constructor injection if we instantiate it manually.
      * Or better yet, make a static helper that returns a callable which resolves dependencies.
+     * @throws LoaderError
+     * @throws RuntimeError
+     * @throws SyntaxError
      */
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -83,7 +90,7 @@ class RoleMiddleware implements MiddlewareInterface
      */
     public static function requireRoles(array $roles): \Closure
     {
-        return function (ServerRequestInterface $request, RequestHandlerInterface $handler) use ($roles) {
+        return function (ServerRequestInterface $request, RequestHandlerInterface $handler) {
             /* @var \Slim\App $this */
             // Note: In Slim route callbacks, $this is bound to container if using Closure binding?
             // No, Slim 4 doesn't bind $this to container in middleware closures automatically.
