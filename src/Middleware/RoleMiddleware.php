@@ -77,7 +77,7 @@ class RoleMiddleware implements MiddlewareInterface
 
     /**
      * Helper to create the middleware closure/callable for use in routes.
-     * 
+     *
      * @param array<Roles> $roles
      * @return \Closure
      */
@@ -89,7 +89,7 @@ class RoleMiddleware implements MiddlewareInterface
             // No, Slim 4 doesn't bind $this to container in middleware closures automatically.
             // We need to access container from somewhere or use a class.
 
-            // Since we are adding this to the app, we might not have easy access to the container inside a static closure 
+            // Since we are adding this to the app, we might not have easy access to the container inside a static closure
             // unless we pass the container.
 
             // Simplest pattern for Slim 4 with params:
@@ -97,10 +97,10 @@ class RoleMiddleware implements MiddlewareInterface
 
             // But we want a nice syntax like ->add(RoleMiddleware::requireRoles(...))
 
-            // Let's rely on manual instantiation in the routes definition for now, 
+            // Let's rely on manual instantiation in the routes definition for now,
             // or resolving from a global container helper if available (bootstrap() returns container).
 
-            // ... actually, let's keep it simple. We will instantiate it in the route definition callback 
+            // ... actually, let's keep it simple. We will instantiate it in the route definition callback
             // where we have access to $app (and thus the container).
 
             // Return just the class name doesn't work with args.
