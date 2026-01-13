@@ -550,7 +550,7 @@ class SchemaManager
         }
 
         // Handle ENUM type (not supported by SQLite and PostgreSQL)
-        if ($type === 'ENUM') {
+        if ($type === 'ENUM' || str_starts_with($type, 'ENUM')) {
             if ($this->isSQLite()) {
                 $type = 'TEXT';
             } elseif ($this->isPostgreSQL()) {
