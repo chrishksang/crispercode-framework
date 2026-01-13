@@ -5,6 +5,7 @@ namespace CrisperCode\Middleware;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Psr\Log\LoggerInterface;
 use Slim\Csrf\Guard;
 use Slim\Views\Twig;
 
@@ -18,7 +19,8 @@ class CsrfMiddleware
 {
     public function __construct(
         private Twig $twig,
-        private Guard $guard
+        private Guard $guard,
+        private ?LoggerInterface $logger = null
     ) {
     }
 
@@ -47,8 +49,10 @@ class CsrfMiddleware
                 'value' => $value
             ]);
         } catch (\LogicException $e) {
-            // In FrankenPHP worker mode, Twig may already be initialized
-            // Globals reset should have happened, but if not, continue without error
+            // In FrankenPHP worker mode, Twig may already be initialized.
+            $this->logger?->debug('CSRF Twig global could not be set (Twig likely already initialized)', [
+                'exception' => $e,
+            ]);
         }
 
         return $handler->handle($request);

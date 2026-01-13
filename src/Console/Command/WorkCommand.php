@@ -27,6 +27,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 class WorkCommand extends Command
 {
     private bool $shouldQuit = false;
+    private int $lastNoJobsMessageAt = 0;
 
     public function __construct(
         private QueueBackendInterface $backend,
@@ -74,7 +75,11 @@ class WorkCommand extends Command
                     return Command::SUCCESS;
                 }
 
-                $output->writeln("<comment>No jobs available. Sleeping {$sleep}s...</comment>");
+                if ($output->isVerbose() || time() - $this->lastNoJobsMessageAt >= 30) {
+                    $output->writeln("<comment>No jobs available. Sleeping {$sleep}s...</comment>");
+                    $this->lastNoJobsMessageAt = time();
+                }
+
                 sleep($sleep);
                 continue;
             }
@@ -91,7 +96,15 @@ class WorkCommand extends Command
                 if ($this->container->has($jobData->handler)) {
                     $handler = $this->container->get($jobData->handler);
                 } else {
-                    $handler = new $jobData->handler();
+                    $ref = new \ReflectionClass($jobData->handler);
+                    $ctor = $ref->getConstructor();
+                    if ($ctor !== null && $ctor->getNumberOfRequiredParameters() > 0) {
+                        throw new \RuntimeException(
+                            "Handler {$jobData->handler} has required constructor arguments; register it in the container."
+                        );
+                    }
+
+                    $handler = $ref->newInstance();
                 }
 
                 if (!$handler instanceof JobHandlerInterface) {

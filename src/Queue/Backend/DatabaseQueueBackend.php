@@ -34,7 +34,13 @@ class DatabaseQueueBackend implements QueueBackendInterface
         $job = new QueueJob($this->db);
         $job->queue = $queue;
         $job->handler = $handler;
-        $job->payload = json_encode($payload);
+
+        $json = json_encode($payload);
+        if ($json === false) {
+            $json = '{}';
+        }
+        $job->payload = $json;
+
         $job->priority = $priority;
         $job->availableAt = date('Y-m-d H:i:s', time() + $delay);
         $job->save();
@@ -113,11 +119,19 @@ class DatabaseQueueBackend implements QueueBackendInterface
      */
     private function toJobData(QueueJob $job): QueueJobData
     {
+        $payload = json_decode($job->payload, true);
+        if (!is_array($payload)) {
+            $payload = [
+                '_raw_payload' => $job->payload,
+                '_json_error' => json_last_error_msg(),
+            ];
+        }
+
         return new QueueJobData(
             id: (string) $job->id,
             queue: $job->queue,
             handler: $job->handler,
-            payload: json_decode($job->payload, true),
+            payload: $payload,
             attempts: $job->attempts,
             maxAttempts: $job->maxAttempts
         );
