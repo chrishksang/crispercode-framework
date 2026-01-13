@@ -12,6 +12,7 @@ use CrisperCode\Entity\KeyValue;
 use CrisperCode\Entity\LoginAttempt;
 use CrisperCode\Entity\RememberToken;
 use CrisperCode\Entity\User;
+use CrisperCode\Entity\UserRole;
 use PHPUnit\Framework\TestCase;
 
 class FrameworkEntityProviderTest extends TestCase
@@ -59,10 +60,12 @@ class FrameworkEntityProviderTest extends TestCase
 
         $expectedEntities = [
             User::class,
+            UserRole::class,
             LoginAttempt::class,
             RememberToken::class,
             EmailVerificationToken::class,
             KeyValue::class,
+            \CrisperCode\Entity\QueueJob::class,
         ];
 
         foreach ($expectedEntities as $expected) {

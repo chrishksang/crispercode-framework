@@ -9,6 +9,7 @@ use CrisperCode\Entity\KeyValue;
 use CrisperCode\Entity\LoginAttempt;
 use CrisperCode\Entity\RememberToken;
 use CrisperCode\Entity\User;
+use CrisperCode\Entity\UserRole;
 
 /**
  * Provides the list of framework-level entities for schema synchronization.
@@ -26,10 +27,12 @@ class FrameworkEntityProvider implements EntityProviderInterface
     {
         return [
             User::class,
+            UserRole::class,
             LoginAttempt::class,
             RememberToken::class,
             EmailVerificationToken::class,
             KeyValue::class,
+            \CrisperCode\Entity\QueueJob::class,
         ];
     }
 }

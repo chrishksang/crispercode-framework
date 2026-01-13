@@ -61,6 +61,12 @@ class Application extends SymfonyApplication
         }
         $app->add($schemaSyncCommand);
 
+        // Register user:role command
+        $entityFactory = new \CrisperCode\EntityFactory($db);
+        $userRoleManager = new \CrisperCode\EntityManager\UserRoleManager($db, $entityFactory);
+        $app->add(new \CrisperCode\Console\Command\AssignRoleCommand($userRoleManager, $entityFactory));
+        $app->add(new \CrisperCode\Console\Command\RevokeRoleCommand($userRoleManager, $entityFactory));
+
         return $app;
     }
 }
