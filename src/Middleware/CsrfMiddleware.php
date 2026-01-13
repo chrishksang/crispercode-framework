@@ -37,14 +37,19 @@ class CsrfMiddleware
         $name = $request->getAttribute($nameKey);
         $value = $request->getAttribute($valueKey);
 
-        $this->twig->getEnvironment()->addGlobal('csrf', [
-            'keys' => [
-                'name' => $nameKey,
-                'value' => $valueKey
-            ],
-            'name' => $name,
-            'value' => $value
-        ]);
+        try {
+            $this->twig->getEnvironment()->addGlobal('csrf', [
+                'keys' => [
+                    'name' => $nameKey,
+                    'value' => $valueKey
+                ],
+                'name' => $name,
+                'value' => $value
+            ]);
+        } catch (\LogicException $e) {
+            // In FrankenPHP worker mode, Twig may already be initialized
+            // Globals reset should have happened, but if not, continue without error
+        }
 
         return $handler->handle($request);
     }

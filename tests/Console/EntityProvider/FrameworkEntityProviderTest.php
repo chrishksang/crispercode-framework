@@ -65,6 +65,7 @@ class FrameworkEntityProviderTest extends TestCase
             RememberToken::class,
             EmailVerificationToken::class,
             KeyValue::class,
+            \CrisperCode\Entity\QueueJob::class,
         ];
 
         foreach ($expectedEntities as $expected) {

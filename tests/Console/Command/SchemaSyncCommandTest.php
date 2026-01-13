@@ -259,8 +259,8 @@ class SchemaSyncCommandTest extends TestCase
 
         $this->assertEquals(0, $exitCode);
         $display = $tester->getDisplay();
-        // FrameworkEntityProvider has 6 entities
-        $this->assertStringContainsString('6 entities', $display);
-        $this->assertStringContainsString('Total: 6', $display);
+        // FrameworkEntityProvider has 7 entities
+        $this->assertStringContainsString('7 entities', $display);
+        $this->assertStringContainsString('Total: 7', $display);
     }
 }

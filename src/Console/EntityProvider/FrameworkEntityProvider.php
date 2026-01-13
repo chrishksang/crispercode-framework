@@ -32,6 +32,7 @@ class FrameworkEntityProvider implements EntityProviderInterface
             RememberToken::class,
             EmailVerificationToken::class,
             KeyValue::class,
+            \CrisperCode\Entity\QueueJob::class,
         ];
     }
 }
