@@ -36,27 +36,44 @@ class QueueJobManager extends EntityManagerBase
         $this->db->startTransaction();
 
         try {
-            // Find next available job with locking
             $now = date('Y-m-d H:i:s');
+            $forUpdate = $this->isSQLite() ? '' : ' FOR UPDATE';
+
+            // Prefer pending jobs first
             $row = $this->db->queryFirstRow(
                 "SELECT * FROM queue_jobs 
                 WHERE queue = %s 
                 AND status = %s 
                 AND available_at <= %s
                 ORDER BY priority DESC, id ASC
-                LIMIT 1
-                FOR UPDATE",
+                LIMIT 1{$forUpdate}",
                 $queue,
                 QueueJob::STATUS_PENDING,
                 $now
             );
+
+            // If none, allow reclaiming timed-out processing jobs
+            if ($row === null) {
+                $timeoutCutoff = date('Y-m-d H:i:s', time() - $timeout);
+                $row = $this->db->queryFirstRow(
+                    "SELECT * FROM queue_jobs 
+                    WHERE queue = %s 
+                    AND status = %s 
+                    AND reserved_at IS NOT NULL
+                    AND reserved_at <= %s
+                    ORDER BY reserved_at ASC, priority DESC, id ASC
+                    LIMIT 1{$forUpdate}",
+                    $queue,
+                    QueueJob::STATUS_PROCESSING,
+                    $timeoutCutoff
+                );
+            }
 
             if ($row === null) {
                 $this->db->commit();
                 return null;
             }
 
-            // Mark as processing
             /** @var QueueJob $job */
             $job = $this->entityFactory->create(QueueJob::class, $row);
             $job->status = QueueJob::STATUS_PROCESSING;
@@ -70,6 +87,16 @@ class QueueJobManager extends EntityManagerBase
             $this->db->rollback();
             throw $e;
         }
+    }
+
+    private function isSQLite(): bool
+    {
+        $pdo = $this->db->get();
+        if ($pdo === null) {
+            return false;
+        }
+
+        return $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite';
     }
 
     /**

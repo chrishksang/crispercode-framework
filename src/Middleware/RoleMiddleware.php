@@ -6,15 +6,13 @@ namespace CrisperCode\Middleware;
 
 use CrisperCode\EntityManager\UserRoleManager;
 use CrisperCode\Enum\Roles;
+use Psr\Container\ContainerInterface;
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Slim\Views\Twig;
-use Twig\Error\LoaderError;
-use Twig\Error\RuntimeError;
-use Twig\Error\SyntaxError;
 
 /**
  * Middleware that restricts access to users with specific roles.
@@ -24,10 +22,7 @@ use Twig\Error\SyntaxError;
 class RoleMiddleware implements MiddlewareInterface
 {
     /**
-     * @param UserRoleManager $userRoleManager Manager for checking user roles.
-     * @param ResponseFactoryInterface $responseFactory Factory for creating responses.
-     * @param Twig $view Twig view for rendering error pages.
-     * @param array<Roles> $requiredRoles valid roles for this route (one of these is required).
+     * @param array<Roles> $requiredRoles Valid roles for this route (one of these is required).
      */
     public function __construct(
         private UserRoleManager $userRoleManager,
@@ -37,37 +32,12 @@ class RoleMiddleware implements MiddlewareInterface
     ) {
     }
 
-    /**
-     * Factory method to create an instance with specific roles requirement.
-     *
-     * @param ServerRequestInterface $request
-     * @param RequestHandlerInterface $handler
-     * @return ResponseInterface Class name for DI container (if used as string) or closure?
-     *
-     * Actually, in Slim, we often instantiate middleware or use a DI key.
-     * But since we need to pass strict parameters ($roles) that vary per route,
-     * we usually use a static helper or a class that takes arguments.
-     *
-     * However, standard DI in Slim 4 complicates passing dynamic args to middleware constructors
-     * if the middleware is resolved from container.
-     *
-     * Better approach: explicit construction or a wrapper.
-     *
-     * Let's stick to simple constructor injection if we instantiate it manually.
-     * Or better yet, make a static helper that returns a callable which resolves dependencies.
-     * @throws LoaderError
-     * @throws RuntimeError
-     * @throws SyntaxError
-     */
-
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         /** @var \CrisperCode\Entity\User|null $user */
         $user = $request->getAttribute('user');
 
         if (!$user) {
-            // Not authenticated - redirect to login or let AuthMiddleware handle it.
-            // Assuming AuthMiddleware runs BEFORE this.
             $response = $this->responseFactory->createResponse(302);
             return $response->withHeader('Location', '/login');
         }
@@ -83,36 +53,21 @@ class RoleMiddleware implements MiddlewareInterface
     }
 
     /**
-     * Helper to create the middleware closure/callable for use in routes.
+     * Convenience helper for Slim apps using a PSR-11 container.
+     *
+     * Usage:
+     *   $app->get('/admin', ...)
+     *       ->add(RoleMiddleware::requireRoles($container, [Roles::ADMIN]));
      *
      * @param array<Roles> $roles
-     * @return \Closure
      */
-    public static function requireRoles(array $roles): \Closure
+    public static function requireRoles(ContainerInterface $container, array $roles): self
     {
-        return function (ServerRequestInterface $request, RequestHandlerInterface $handler) {
-            /* @var \Slim\App $this */
-            // Note: In Slim route callbacks, $this is bound to container if using Closure binding?
-            // No, Slim 4 doesn't bind $this to container in middleware closures automatically.
-            // We need to access container from somewhere or use a class.
-
-            // Since we are adding this to the app, we might not have easy access to the container inside a static closure
-            // unless we pass the container.
-
-            // Simplest pattern for Slim 4 with params:
-            // $app->get(...)->add(new RoleMiddleware($container->get(UserRoleManager::class), ..., $roles));
-
-            // But we want a nice syntax like ->add(RoleMiddleware::requireRoles(...))
-
-            // Let's rely on manual instantiation in the routes definition for now,
-            // or resolving from a global container helper if available (bootstrap() returns container).
-
-            // ... actually, let's keep it simple. We will instantiate it in the route definition callback
-            // where we have access to $app (and thus the container).
-
-            // Return just the class name doesn't work with args.
-
-            throw new \RuntimeException('Use new RoleMiddleware(...) instead.');
-        };
+        return new self(
+            $container->get(UserRoleManager::class),
+            $container->get(ResponseFactoryInterface::class),
+            $container->get(Twig::class),
+            $roles
+        );
     }
 }

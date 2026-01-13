@@ -14,7 +14,8 @@ use MeekroDB;
  *
  * @package CrisperCode\Entity
  */
-#[Index(columns: ['queue', 'status', 'available_at', 'priority'], unique: false)]
+#[Index(columns: ['queue', 'status', 'available_at', 'priority', 'id'], unique: false)]
+#[Index(columns: ['queue', 'status', 'reserved_at'], unique: false)]
 #[Index(columns: ['status', 'created_at'], unique: false)]
 class QueueJob extends EntityBase
 {
