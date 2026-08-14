@@ -254,4 +254,18 @@ class FrameworkConfigTest extends TestCase
             $_ENV['SYSTEM_MASTER_KEY'] = $savedSystemKey;
         }
     }
+
+    public function testFromEnvironmentAcceptsExplicitVendorPath(): void
+    {
+        $config = FrameworkConfig::fromEnvironment('/srv/src', 'rns', '/srv/vendor');
+
+        $this->assertSame('/srv/vendor', $config->getVendorPath());
+    }
+
+    public function testFromEnvironmentDefaultsVendorPathBelowRoot(): void
+    {
+        $config = FrameworkConfig::fromEnvironment('/srv/src', 'rns');
+
+        $this->assertSame('/srv/src/vendor', $config->getVendorPath());
+    }
 }

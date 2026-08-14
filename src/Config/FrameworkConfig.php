@@ -118,12 +118,16 @@ class FrameworkConfig
      *
      * Reads from $_ENV (preferred) with fallback to $_SERVER.
      */
-    public static function fromEnvironment(string $rootPath, string $appName = 'Application'): self
-    {
+    public static function fromEnvironment(
+        string $rootPath,
+        string $appName = 'Application',
+        ?string $vendorPath = null
+    ): self {
         return new self(
             rootPath: $rootPath,
             environment: self::getEnv('ENVIRONMENT') ?? 'production',
             appName: $appName,
+            vendorPath: $vendorPath,
             dbDriver: self::getEnv('DB_DRIVER'),
             dbHost: self::getEnv('DB_HOST') ?? self::getEnv('MYSQL_HOST'),
             dbName: self::getEnv('DB_NAME') ?? self::getEnv('MYSQL_DATABASE'),
