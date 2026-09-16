@@ -26,6 +26,15 @@ use Symfony\Component\Console\Output\OutputInterface;
 )]
 class WorkCommand extends Command
 {
+    /**
+     * Empty polls tolerated at the full poll rate before backing off.
+     *
+     * Low enough that a worker that has just drained its queue keeps checking
+     * briskly for the work that usually follows, high enough that a burst
+     * arriving mid-backoff is not what sets the pace.
+     */
+    private const EMPTY_POLLS_BEFORE_BACKOFF = 5;
+
     private bool $shouldQuit = false;
     private int $lastNoJobsMessageAt = 0;
 
@@ -43,6 +52,13 @@ class WorkCommand extends Command
             ->addArgument('queue', InputArgument::OPTIONAL, 'Queue to process', 'default')
             ->addOption('once', null, InputOption::VALUE_NONE, 'Process one job then exit')
             ->addOption('sleep', null, InputOption::VALUE_OPTIONAL, 'Seconds to sleep when no jobs available', 3)
+            ->addOption(
+                'max-sleep',
+                null,
+                InputOption::VALUE_OPTIONAL,
+                'Seconds to sleep once a queue has been idle for a while',
+                10
+            )
             ->addOption('timeout', null, InputOption::VALUE_OPTIONAL, 'Job reservation timeout', 60);
     }
 
@@ -51,7 +67,9 @@ class WorkCommand extends Command
         $queue = $input->getArgument('queue');
         $once = $input->getOption('once');
         $sleep = (int) $input->getOption('sleep');
+        $maxSleep = (int) $input->getOption('max-sleep');
         $timeout = (int) $input->getOption('timeout');
+        $consecutiveEmptyPolls = 0;
 
         // Register signal handlers for graceful shutdown
         if (function_exists('pcntl_signal')) {
@@ -75,14 +93,19 @@ class WorkCommand extends Command
                     return Command::SUCCESS;
                 }
 
+                $consecutiveEmptyPolls++;
+                $idleSleep = self::idleSleepSeconds($sleep, $maxSleep, $consecutiveEmptyPolls);
+
                 if ($output->isVerbose() || time() - $this->lastNoJobsMessageAt >= 30) {
-                    $output->writeln("<comment>No jobs available. Sleeping {$sleep}s...</comment>");
+                    $output->writeln("<comment>No jobs available. Sleeping {$idleSleep}s...</comment>");
                     $this->lastNoJobsMessageAt = time();
                 }
 
-                sleep($sleep);
+                sleep($idleSleep);
                 continue;
             }
+
+            $consecutiveEmptyPolls = 0;
 
             $output->writeln("<info>Processing job {$jobData->id} ({$jobData->handler})</info>");
 
@@ -144,6 +167,34 @@ class WorkCommand extends Command
 
         $output->writeln('<comment>Worker shutting down...</comment>');
         return Command::SUCCESS;
+    }
+
+    /**
+     * How long to sleep after an unbroken run of empty polls.
+     *
+     * A poll is cheap but not free - it is two indexed SELECTs against a file
+     * every other container is also writing to - and a queue that has been
+     * quiet for twenty seconds is usually quiet for minutes. So the first few
+     * empty polls keep the configured rate and the rest double up to
+     * $maxSleep, which a single claimed job resets.
+     *
+     * Public and static because the arithmetic is the part worth testing, and
+     * testing it through the loop would mean actually sleeping.
+     */
+    public static function idleSleepSeconds(int $sleep, int $maxSleep, int $consecutiveEmptyPolls): int
+    {
+        // A max below the base is a misconfiguration, not an instruction to
+        // poll faster than asked.
+        $maxSleep = max($sleep, $maxSleep);
+
+        $steps = $consecutiveEmptyPolls - self::EMPTY_POLLS_BEFORE_BACKOFF;
+        if ($steps <= 0) {
+            return $sleep;
+        }
+
+        // Capped before the shift so a worker left running for days cannot
+        // overflow it.
+        return (int) min($maxSleep, $sleep * 2 ** min($steps, 16));
     }
 
     /**
