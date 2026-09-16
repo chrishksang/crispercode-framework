@@ -191,9 +191,10 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
      *
      * Deliberately fast. Bcrypt exists to slow down guessing of low-entropy
      * secrets; a remember me token is 32 bytes from random_bytes(), so there is
-     * nothing to guess and the two bcrypt runs a rotation needed (~450 ms of
-     * CPU, measured locally at ~223 ms each) bought no security - they only
-     * held a worker thread on every remembered-session request. A keyed SHA-256
+     * nothing to guess and the two bcrypt runs a rotation needed - one to
+     * verify, one to hash the replacement, a quarter of a second each on the
+     * hosts this runs on - bought no security. They only held a worker thread
+     * for half a second on every remembered-session request. A keyed SHA-256
      * compared with hash_equals() gives the same protection against a stolen
      * database at a cost that does not show up in a trace.
      *
