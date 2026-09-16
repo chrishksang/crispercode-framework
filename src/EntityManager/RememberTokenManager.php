@@ -6,6 +6,9 @@ namespace CrisperCode\EntityManager;
 
 use CrisperCode\Attribute\EntityManagerAttribute;
 use CrisperCode\Entity\RememberToken;
+use CrisperCode\EntityFactory;
+use MeekroDB;
+use Psr\Log\LoggerInterface;
 
 /**
  * Manager for Remember Me tokens.
@@ -27,6 +30,41 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
      * Token expiration in days.
      */
     private const TOKEN_EXPIRY_DAYS = 30;
+
+    /**
+     * Key for the token hash HMAC.
+     *
+     * Not a secret: it exists for domain separation, not for confidentiality.
+     * The point is that the stored hash must not be derivable into the AES key
+     * that encryptWithToken() derives from the same token with
+     * hash('sha256', $token, true). A bare hash('sha256', $token) would be the
+     * hex form of exactly that key, so anyone who read the tokens table could
+     * decrypt every stored encrypted_key. HMAC with a fixed label keeps the two
+     * derivations independent.
+     *
+     * Changing this value invalidates every stored token hash, which logs
+     * every remembered session out and trips the theft check on next use.
+     */
+    private const TOKEN_HASH_KEY = 'crispercode/remember-token-hash/v1';
+
+    /**
+     * Optional logger for verification timing.
+     */
+    private ?LoggerInterface $logger;
+
+    /**
+     * RememberTokenManager constructor.
+     *
+     * @param MeekroDB $db Database connection.
+     * @param EntityFactory $entityFactory Entity factory instance.
+     * @param LoggerInterface|null $logger Optional logger for verification timing.
+     */
+    public function __construct(MeekroDB $db, EntityFactory $entityFactory, ?LoggerInterface $logger = null)
+    {
+        parent::__construct($db, $entityFactory);
+
+        $this->logger = $logger;
+    }
 
     /**
      * Creates a new remember me token for a user.
@@ -51,7 +89,7 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
         $rememberToken = $this->entityFactory->create(RememberToken::class);
         $rememberToken->userId = $userId;
         $rememberToken->series = $series;
-        $rememberToken->tokenHash = password_hash($token, PASSWORD_DEFAULT);
+        $rememberToken->tokenHash = self::hashToken($token);
         $rememberToken->setCreatedAtNow();
         $rememberToken->setExpiresIn(self::TOKEN_EXPIRY_DAYS);
         $rememberToken->userAgent = $userAgent !== null ? substr($userAgent, 0, 500) : null;
@@ -107,7 +145,7 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
         }
 
         // Verify token hash
-        if (!password_verify($token, $rememberToken->tokenHash)) {
+        if (!$this->verifyTokenHash($token, $rememberToken->tokenHash)) {
             // Token mismatch with valid series = possible theft!
             // Revoke all tokens for this user as a security measure
             $this->revokeAllForUser($rememberToken->userId);
@@ -122,7 +160,8 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
 
         // Token is valid - rotate it
         $newToken = bin2hex(random_bytes(32));
-        $rememberToken->tokenHash = password_hash($newToken, PASSWORD_DEFAULT);
+        // Rotation always writes the current scheme, so a legacy row migrates on first use.
+        $rememberToken->tokenHash = self::hashToken($newToken);
         $rememberToken->touch();
         $rememberToken->setExpiresIn(self::TOKEN_EXPIRY_DAYS);
 
@@ -145,6 +184,61 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
             'newToken' => $newToken,
             'encryptionKey' => $encryptionKey,
         ];
+    }
+
+    /**
+     * Hashes a remember me token for storage.
+     *
+     * Deliberately fast. Bcrypt exists to slow down guessing of low-entropy
+     * secrets; a remember me token is 32 bytes from random_bytes(), so there is
+     * nothing to guess and the two bcrypt runs a rotation needed (~450 ms of
+     * CPU, measured locally at ~223 ms each) bought no security - they only
+     * held a worker thread on every remembered-session request. A keyed SHA-256
+     * compared with hash_equals() gives the same protection against a stolen
+     * database at a cost that does not show up in a trace.
+     *
+     * @param string $token The raw token from the cookie.
+     * @return string The hex-encoded hash to store in token_hash.
+     */
+    public static function hashToken(string $token): string
+    {
+        return hash_hmac('sha256', $token, self::TOKEN_HASH_KEY);
+    }
+
+    /**
+     * Verifies a presented token against a stored hash.
+     *
+     * Accepts both schemes so that tokens issued before the switch keep
+     * working: a password_hash() digest is self-describing ("$2y$...", or
+     * "$argon2..." if the default ever changed), while a current hash is 64
+     * hex characters and so can never start with "$". Rotation rewrites the
+     * row with the current scheme, so the legacy branch drains itself within
+     * one token lifetime (TOKEN_EXPIRY_DAYS) of the deploy and can then be
+     * removed.
+     *
+     * @param string $token The raw token from the cookie.
+     * @param string $storedHash The hash stored in token_hash.
+     * @return bool True if the token matches.
+     */
+    private function verifyTokenHash(string $token, string $storedHash): bool
+    {
+        $legacy = str_starts_with($storedHash, '$');
+
+        $startedAt = hrtime(true);
+        $valid = $legacy
+            ? password_verify($token, $storedHash)
+            : hash_equals($storedHash, self::hashToken($token));
+        $elapsedMs = (hrtime(true) - $startedAt) / 1_000_000;
+
+        // A regression here is invisible in a trace otherwise: the cost sits
+        // between the SELECT and the UPDATE, where nothing else is recorded.
+        $this->logger?->debug('Remember token hash verified', [
+            'scheme' => $legacy ? 'password_hash' : 'hmac-sha256',
+            'valid' => $valid,
+            'duration_ms' => round($elapsedMs, 3),
+        ]);
+
+        return $valid;
     }
 
     /**

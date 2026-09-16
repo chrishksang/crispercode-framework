@@ -311,6 +311,189 @@ class RememberTokenManagerTest extends TestCase
         $this->assertEquals($encryptionKey, $result['encryptionKey']);
     }
 
+    public function testCreateTokenStoresKeyedHashNotBcrypt(): void
+    {
+        $tokenMock = $this->createMock(RememberToken::class);
+        $tokenMock->expects($this->once())->method('save');
+
+        $this->entityFactoryMock->expects($this->once())
+            ->method('create')
+            ->willReturn($tokenMock);
+
+        $result = $this->manager->createToken(42);
+
+        $this->assertSame(
+            RememberTokenManager::hashToken($result['token']),
+            $tokenMock->tokenHash
+        );
+        $this->assertStringStartsNotWith('$', $tokenMock->tokenHash);
+        $this->assertSame(64, strlen($tokenMock->tokenHash));
+    }
+
+    public function testStoredHashDoesNotRevealTheEncryptionKeyDerivedFromTheToken(): void
+    {
+        // encryptWithToken() uses hash('sha256', $token, true) as the AES key, so
+        // the stored hash must not be that digest in another encoding - otherwise
+        // read access to the table would be enough to decrypt every encrypted_key.
+        $token = bin2hex(random_bytes(32));
+
+        $this->assertNotSame(hash('sha256', $token), RememberTokenManager::hashToken($token));
+    }
+
+    public function testValidateAndRotateTokenAcceptsLegacyBcryptHashAndRewritesIt(): void
+    {
+        $originalToken = bin2hex(random_bytes(32));
+        $legacyHash = password_hash($originalToken, PASSWORD_BCRYPT, ['cost' => 4]);
+
+        $this->dbMock->expects($this->once())
+            ->method('queryFirstRow')
+            ->willReturn($this->tokenRow($legacyHash));
+
+        $tokenMock = $this->createMock(RememberToken::class);
+        $tokenMock->userId = 42;
+        $tokenMock->encryptedKey = null;
+        $tokenMock->tokenHash = $legacyHash;
+        $tokenMock->method('isExpired')->willReturn(false);
+        $tokenMock->expects($this->once())->method('save');
+
+        $this->entityFactoryMock->expects($this->once())
+            ->method('create')
+            ->willReturn($tokenMock);
+
+        $result = $this->manager->validateAndRotateToken('test-series', $originalToken);
+
+        $this->assertNotNull($result);
+        $this->assertEquals(42, $result['userId']);
+        // The row is migrated to the current scheme by the rotation itself.
+        $this->assertSame(RememberTokenManager::hashToken($result['newToken']), $tokenMock->tokenHash);
+    }
+
+    public function testValidateAndRotateTokenAcceptsCurrentSchemeHash(): void
+    {
+        $originalToken = bin2hex(random_bytes(32));
+
+        $this->dbMock->expects($this->once())
+            ->method('queryFirstRow')
+            ->willReturn($this->tokenRow(RememberTokenManager::hashToken($originalToken)));
+
+        $tokenMock = $this->createMock(RememberToken::class);
+        $tokenMock->userId = 42;
+        $tokenMock->encryptedKey = null;
+        $tokenMock->tokenHash = RememberTokenManager::hashToken($originalToken);
+        $tokenMock->method('isExpired')->willReturn(false);
+        $tokenMock->expects($this->once())->method('save');
+
+        $this->entityFactoryMock->expects($this->once())
+            ->method('create')
+            ->willReturn($tokenMock);
+
+        $result = $this->manager->validateAndRotateToken('test-series', $originalToken);
+
+        $this->assertNotNull($result);
+        $this->assertSame(RememberTokenManager::hashToken($result['newToken']), $tokenMock->tokenHash);
+    }
+
+    public function testValidateAndRotateTokenRevokesEverythingForAWrongToken(): void
+    {
+        $storedHash = RememberTokenManager::hashToken(bin2hex(random_bytes(32)));
+
+        $this->dbMock->expects($this->once())
+            ->method('queryFirstRow')
+            ->willReturn($this->tokenRow($storedHash));
+
+        // A valid series with the wrong token means the cookie was stolen.
+        $this->dbMock->expects($this->once())
+            ->method('query')
+            ->with($this->stringContains('DELETE FROM remember_tokens WHERE user_id'), 42);
+
+        $tokenMock = $this->createMock(RememberToken::class);
+        $tokenMock->userId = 42;
+        $tokenMock->tokenHash = $storedHash;
+        $tokenMock->method('isExpired')->willReturn(false);
+        $tokenMock->expects($this->never())->method('save');
+
+        $this->entityFactoryMock->expects($this->once())
+            ->method('create')
+            ->willReturn($tokenMock);
+
+        $result = $this->manager->validateAndRotateToken('test-series', bin2hex(random_bytes(32)));
+
+        $this->assertNull($result);
+    }
+
+    public function testValidateAndRotateTokenRejectsALegacyHashForTheWrongToken(): void
+    {
+        $storedHash = password_hash(bin2hex(random_bytes(32)), PASSWORD_BCRYPT, ['cost' => 4]);
+
+        $this->dbMock->expects($this->once())
+            ->method('queryFirstRow')
+            ->willReturn($this->tokenRow($storedHash));
+
+        $this->dbMock->expects($this->once())
+            ->method('query')
+            ->with($this->stringContains('DELETE FROM remember_tokens WHERE user_id'), 42);
+
+        $tokenMock = $this->createMock(RememberToken::class);
+        $tokenMock->userId = 42;
+        $tokenMock->tokenHash = $storedHash;
+        $tokenMock->method('isExpired')->willReturn(false);
+        $tokenMock->expects($this->never())->method('save');
+
+        $this->entityFactoryMock->expects($this->once())
+            ->method('create')
+            ->willReturn($tokenMock);
+
+        $result = $this->manager->validateAndRotateToken('test-series', bin2hex(random_bytes(32)));
+
+        $this->assertNull($result);
+    }
+
+    public function testValidateAndRotateTokenCompletesWellUnderFiveMilliseconds(): void
+    {
+        // The whole point of the change: two bcrypt runs cost ~450 ms here.
+        $originalToken = bin2hex(random_bytes(32));
+
+        $this->dbMock->method('queryFirstRow')
+            ->willReturn($this->tokenRow(RememberTokenManager::hashToken($originalToken)));
+
+        $tokenMock = $this->createMock(RememberToken::class);
+        $tokenMock->userId = 42;
+        $tokenMock->encryptedKey = null;
+        $tokenMock->tokenHash = RememberTokenManager::hashToken($originalToken);
+        $tokenMock->method('isExpired')->willReturn(false);
+
+        $this->entityFactoryMock->method('create')->willReturn($tokenMock);
+
+        $startedAt = hrtime(true);
+        $result = $this->manager->validateAndRotateToken('test-series', $originalToken);
+        $elapsedMs = (hrtime(true) - $startedAt) / 1_000_000;
+
+        $this->assertNotNull($result);
+        $this->assertLessThan(5.0, $elapsedMs, sprintf('Validation took %.3f ms', $elapsedMs));
+    }
+
+    /**
+     * Builds a remember_tokens row that is valid apart from the hash under test.
+     *
+     * @param string $tokenHash The stored token hash.
+     * @return array<string, mixed> The row as queryFirstRow() would return it.
+     */
+    private function tokenRow(string $tokenHash): array
+    {
+        return [
+            'id' => 1,
+            'user_id' => 42,
+            'series' => 'test-series',
+            'token_hash' => $tokenHash,
+            'created_at' => date('Y-m-d H:i:s'),
+            'expires_at' => date('Y-m-d H:i:s', time() + 86400),
+            'last_used_at' => null,
+            'user_agent' => null,
+            'ip_address' => null,
+            'encrypted_key' => null,
+        ];
+    }
+
     public function testValidateAndRotateTokenReturnsNullEncryptionKeyWhenNotStored(): void
     {
         $originalToken = bin2hex(random_bytes(32));
