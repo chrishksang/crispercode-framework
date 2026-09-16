@@ -25,7 +25,23 @@ class QueueJobManager extends EntityManagerBase
     }
 
     /**
+     * Retries for a lost claim race, on either claim path. A loser only ever
+     * loses to a winner, so one more look is nearly always enough; the cap
+     * just keeps a pile-up of workers from spinning here.
+     */
+    private const CLAIM_ATTEMPTS = 3;
+
+    /**
      * Atomically claim the next available job from a queue.
+     *
+     * The claim is the conditional UPDATE below and nothing else: only one
+     * caller can move a row out of `pending`, and affectedRows() tells it
+     * whether it was that caller.
+     *
+     * Transaction-free on purpose. Wrapping the poll in one made every empty
+     * poll take a write lock, and in WAL mode writers block writers - three
+     * idle workers were doing that roughly once a second between them,
+     * against the same file the web container commits to.
      *
      * @param string $queue Queue name
      * @param int $timeout Reservation timeout in seconds
@@ -33,70 +49,142 @@ class QueueJobManager extends EntityManagerBase
      */
     public function claimNextJob(string $queue, int $timeout = 60): ?QueueJob
     {
-        $this->db->startTransaction();
-
-        try {
+        for ($attempt = 0; $attempt < self::CLAIM_ATTEMPTS; $attempt++) {
             $now = date('Y-m-d H:i:s');
-            $forUpdate = $this->isSQLite() ? '' : ' FOR UPDATE';
 
-            // Prefer pending jobs first
             $row = $this->db->queryFirstRow(
-                "SELECT * FROM queue_jobs 
-                WHERE queue = %s 
-                AND status = %s 
+                "SELECT * FROM queue_jobs
+                WHERE queue = %s
+                AND status = %s
                 AND available_at <= %s
                 ORDER BY priority DESC, id ASC
-                LIMIT 1{$forUpdate}",
+                LIMIT 1",
                 $queue,
                 QueueJob::STATUS_PENDING,
                 $now
             );
 
-            // If none, allow reclaiming timed-out processing jobs
+            // Nothing pending: an empty poll is now two SELECTs and no write
+            // at all.
             if ($row === null) {
-                $timeoutCutoff = date('Y-m-d H:i:s', time() - $timeout);
-                $row = $this->db->queryFirstRow(
-                    "SELECT * FROM queue_jobs 
-                    WHERE queue = %s 
-                    AND status = %s 
-                    AND reserved_at IS NOT NULL
-                    AND reserved_at <= %s
-                    ORDER BY reserved_at ASC, priority DESC, id ASC
-                    LIMIT 1{$forUpdate}",
-                    $queue,
-                    QueueJob::STATUS_PROCESSING,
-                    $timeoutCutoff
-                );
+                break;
             }
 
+            $job = $this->reservePending($row, $now);
+            if ($job !== null) {
+                return $job;
+            }
+        }
+
+        return $this->reclaimTimedOutJob($queue, $timeout);
+    }
+
+    /**
+     * Move a pending row to processing, or report that someone else did.
+     *
+     * @param array<string, mixed> $row The row as SELECTed.
+     * @return QueueJob|null The claimed job, or null if the race was lost.
+     */
+    private function reservePending(array $row, string $now): ?QueueJob
+    {
+        $this->db->query(
+            "UPDATE queue_jobs
+            SET status = %s, reserved_at = %s, attempts = attempts + 1
+            WHERE id = %i AND status = %s",
+            QueueJob::STATUS_PROCESSING,
+            $now,
+            (int) $row['id'],
+            QueueJob::STATUS_PENDING
+        );
+
+        // `status = pending` in the WHERE clause is the whole claim: a second
+        // worker that SELECTed the same row matches nothing and gets 0 here.
+        if ($this->db->affectedRows() !== 1) {
+            return null;
+        }
+
+        return $this->hydrateReserved($row, $now);
+    }
+
+    /**
+     * Take over a reservation whose owner has gone past the timeout.
+     *
+     * Reached only when nothing is pending, so a busy queue never pays for it.
+     * Retried like the pending path: a reclaimer that loses a race would
+     * otherwise report an empty queue and back off with another stale
+     * reservation still sitting there.
+     */
+    private function reclaimTimedOutJob(string $queue, int $timeout): ?QueueJob
+    {
+        for ($attempt = 0; $attempt < self::CLAIM_ATTEMPTS; $attempt++) {
+            $timeoutCutoff = date('Y-m-d H:i:s', time() - $timeout);
+
+            $row = $this->db->queryFirstRow(
+                "SELECT * FROM queue_jobs
+                WHERE queue = %s
+                AND status = %s
+                AND reserved_at IS NOT NULL
+                AND reserved_at <= %s
+                ORDER BY reserved_at ASC, priority DESC, id ASC
+                LIMIT 1",
+                $queue,
+                QueueJob::STATUS_PROCESSING,
+                $timeoutCutoff
+            );
+
             if ($row === null) {
-                $this->db->commit();
                 return null;
             }
 
-            /** @var QueueJob $job */
-            $job = $this->entityFactory->create(QueueJob::class, $row);
-            $job->status = QueueJob::STATUS_PROCESSING;
-            $job->reservedAt = $now;
-            $job->attempts++;
-            $job->save();
+            $now = date('Y-m-d H:i:s');
 
-            $this->db->commit();
-            return $job;
-        } catch (\Exception $e) {
-            $this->db->rollback();
-            throw $e;
+            // The staleness test is repeated in the WHERE clause rather than
+            // trusting the SELECT: what makes this row claimable is its old
+            // reserved_at, so a row re-reserved in between - by its original
+            // owner finishing and the job being retried, or by another
+            // reclaimer - must stay with whoever holds it now. That fresh
+            // reserved_at is also what keeps the retry above off this row.
+            $this->db->query(
+                "UPDATE queue_jobs
+                SET reserved_at = %s, attempts = attempts + 1
+                WHERE id = %i
+                AND status = %s
+                AND reserved_at IS NOT NULL
+                AND reserved_at <= %s",
+                $now,
+                (int) $row['id'],
+                QueueJob::STATUS_PROCESSING,
+                $timeoutCutoff
+            );
+
+            if ($this->db->affectedRows() === 1) {
+                return $this->hydrateReserved($row, $now);
+            }
         }
+
+        return null;
     }
 
-    private function isSQLite(): bool
+    /**
+     * Build the entity for a row this process has just reserved.
+     *
+     * From the row plus exactly what the UPDATE did, rather than re-reading
+     * it: the reservation is ours, so nothing else is going to change the row,
+     * and hydrating from the row as SELECTed would hand the caller a job whose
+     * status and attempt count the database disagrees with.
+     *
+     * @param array<string, mixed> $row The row as SELECTed.
+     */
+    private function hydrateReserved(array $row, string $now): QueueJob
     {
-        $pdo = $this->db->get();
-        if ($pdo === null) {
-            return false;
-        }
+        $row['status'] = QueueJob::STATUS_PROCESSING;
+        $row['reserved_at'] = $now;
+        $row['attempts'] = (int) $row['attempts'] + 1;
 
-        return $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite';
+        /** @var QueueJob $job */
+        $job = $this->entityFactory->create(QueueJob::class, $row);
+
+        return $job;
     }
 
     /**
