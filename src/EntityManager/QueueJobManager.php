@@ -25,9 +25,9 @@ class QueueJobManager extends EntityManagerBase
     }
 
     /**
-     * Retries for a lost claim race before falling back to the reclaim path.
-     * A loser only ever loses to a winner, so one more look is nearly always
-     * enough; the cap just keeps a pile-up of workers from spinning here.
+     * Retries for a lost claim race, on either claim path. A loser only ever
+     * loses to a winner, so one more look is nearly always enough; the cap
+     * just keeps a pile-up of workers from spinning here.
      */
     private const CLAIM_ATTEMPTS = 3;
 
@@ -110,53 +110,59 @@ class QueueJobManager extends EntityManagerBase
      * Take over a reservation whose owner has gone past the timeout.
      *
      * Reached only when nothing is pending, so a busy queue never pays for it.
+     * Retried like the pending path: a reclaimer that loses a race would
+     * otherwise report an empty queue and back off with another stale
+     * reservation still sitting there.
      */
     private function reclaimTimedOutJob(string $queue, int $timeout): ?QueueJob
     {
-        $timeoutCutoff = date('Y-m-d H:i:s', time() - $timeout);
+        for ($attempt = 0; $attempt < self::CLAIM_ATTEMPTS; $attempt++) {
+            $timeoutCutoff = date('Y-m-d H:i:s', time() - $timeout);
 
-        $row = $this->db->queryFirstRow(
-            "SELECT * FROM queue_jobs
-            WHERE queue = %s
-            AND status = %s
-            AND reserved_at IS NOT NULL
-            AND reserved_at <= %s
-            ORDER BY reserved_at ASC, priority DESC, id ASC
-            LIMIT 1",
-            $queue,
-            QueueJob::STATUS_PROCESSING,
-            $timeoutCutoff
-        );
+            $row = $this->db->queryFirstRow(
+                "SELECT * FROM queue_jobs
+                WHERE queue = %s
+                AND status = %s
+                AND reserved_at IS NOT NULL
+                AND reserved_at <= %s
+                ORDER BY reserved_at ASC, priority DESC, id ASC
+                LIMIT 1",
+                $queue,
+                QueueJob::STATUS_PROCESSING,
+                $timeoutCutoff
+            );
 
-        if ($row === null) {
-            return null;
+            if ($row === null) {
+                return null;
+            }
+
+            $now = date('Y-m-d H:i:s');
+
+            // The staleness test is repeated in the WHERE clause rather than
+            // trusting the SELECT: what makes this row claimable is its old
+            // reserved_at, so a row re-reserved in between - by its original
+            // owner finishing and the job being retried, or by another
+            // reclaimer - must stay with whoever holds it now. That fresh
+            // reserved_at is also what keeps the retry above off this row.
+            $this->db->query(
+                "UPDATE queue_jobs
+                SET reserved_at = %s, attempts = attempts + 1
+                WHERE id = %i
+                AND status = %s
+                AND reserved_at IS NOT NULL
+                AND reserved_at <= %s",
+                $now,
+                (int) $row['id'],
+                QueueJob::STATUS_PROCESSING,
+                $timeoutCutoff
+            );
+
+            if ($this->db->affectedRows() === 1) {
+                return $this->hydrateReserved($row, $now);
+            }
         }
 
-        $now = date('Y-m-d H:i:s');
-
-        // The staleness test is repeated in the WHERE clause rather than
-        // trusting the SELECT: what makes this row claimable is its old
-        // reserved_at, so a row re-reserved in between - by its original
-        // owner finishing and the job being retried, or by another reclaimer -
-        // must stay with whoever holds it now.
-        $this->db->query(
-            "UPDATE queue_jobs
-            SET reserved_at = %s, attempts = attempts + 1
-            WHERE id = %i
-            AND status = %s
-            AND reserved_at IS NOT NULL
-            AND reserved_at <= %s",
-            $now,
-            (int) $row['id'],
-            QueueJob::STATUS_PROCESSING,
-            $timeoutCutoff
-        );
-
-        if ($this->db->affectedRows() !== 1) {
-            return null;
-        }
-
-        return $this->hydrateReserved($row, $now);
+        return null;
     }
 
     /**

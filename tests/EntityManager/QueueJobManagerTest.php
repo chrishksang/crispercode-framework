@@ -180,6 +180,50 @@ class QueueJobManagerTest extends TestCase
         $this->assertSame(2, (int) $this->row($id)['attempts'], 'the job was reclaimed twice');
     }
 
+    /**
+     * Losing a reclaim race must not be read as an empty queue: the worker
+     * would back off with reclaimable work still sitting there.
+     */
+    public function testAReclaimerThatLosesARaceTakesTheNextStaleJob(): void
+    {
+        $stale = date('Y-m-d H:i:s', time() - 600);
+        $first = $this->pushJob('default', [
+            'status' => QueueJob::STATUS_PROCESSING,
+            'reserved_at' => $stale,
+            'attempts' => 1,
+        ]);
+        $second = $this->pushJob('default', [
+            'status' => QueueJob::STATUS_PROCESSING,
+            'reserved_at' => $stale,
+            'attempts' => 1,
+        ]);
+
+        $rival = new QueueJobManager($this->db, new EntityFactory($this->db));
+        $rivalJob = null;
+        $interleaved = false;
+
+        $this->db->addHook('pre_run', function (array $args) use (
+            $rival,
+            &$rivalJob,
+            &$interleaved
+        ): void {
+            if ($interleaved || !str_starts_with(ltrim($args['query']), 'UPDATE queue_jobs')) {
+                return;
+            }
+
+            $interleaved = true;
+            $rivalJob = $rival->claimNextJob('default', 60);
+        });
+
+        $job = $this->manager->claimNextJob('default', 60);
+
+        $this->assertTrue($interleaved, 'the interleaving hook never fired');
+        $this->assertNotNull($rivalJob);
+        $this->assertSame($first, $rivalJob->id);
+        $this->assertNotNull($job, 'the loser reported an empty queue');
+        $this->assertSame($second, $job->id);
+    }
+
     public function testClaimReclaimsAReservationPastItsTimeout(): void
     {
         $id = $this->pushJob('default', [
