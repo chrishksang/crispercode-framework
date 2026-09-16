@@ -332,9 +332,8 @@ class RememberTokenManagerTest extends TestCase
 
     public function testStoredHashDoesNotRevealTheEncryptionKeyDerivedFromTheToken(): void
     {
-        // encryptWithToken() uses hash('sha256', $token, true) as the AES key, so
-        // the stored hash must not be that digest in another encoding - otherwise
-        // read access to the table would be enough to decrypt every encrypted_key.
+        // Must differ from encryptWithToken()'s AES key, hash('sha256', $token, true),
+        // or reading this table would be enough to decrypt every encrypted_key.
         $token = bin2hex(random_bytes(32));
 
         $this->assertNotSame(hash('sha256', $token), RememberTokenManager::hashToken($token));
@@ -450,7 +449,7 @@ class RememberTokenManagerTest extends TestCase
 
     public function testValidateAndRotateTokenCompletesWellUnderFiveMilliseconds(): void
     {
-        // The whole point of the change: two bcrypt runs cost ~450 ms here.
+        // Two bcrypt runs would have cost ~450 ms here.
         $originalToken = bin2hex(random_bytes(32));
 
         $this->dbMock->method('queryFirstRow')

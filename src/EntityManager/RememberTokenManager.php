@@ -34,16 +34,11 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
     /**
      * Key for the token hash HMAC.
      *
-     * Not a secret: it exists for domain separation, not for confidentiality.
-     * The point is that the stored hash must not be derivable into the AES key
-     * that encryptWithToken() derives from the same token with
-     * hash('sha256', $token, true). A bare hash('sha256', $token) would be the
-     * hex form of exactly that key, so anyone who read the tokens table could
-     * decrypt every stored encrypted_key. HMAC with a fixed label keeps the two
-     * derivations independent.
-     *
-     * Changing this value invalidates every stored token hash, which logs
-     * every remembered session out and trips the theft check on next use.
+     * Not secret - it is domain separation, keeping this hash independent of the
+     * AES key encryptWithToken() derives from the same token via
+     * hash('sha256', $token, true). Without it a leaked token_hash would double
+     * as that key. Changing it invalidates every stored hash, which reads as
+     * theft and revokes the tokens it is checked against.
      */
     private const TOKEN_HASH_KEY = 'crispercode/remember-token-hash/v1';
 
@@ -189,14 +184,10 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
     /**
      * Hashes a remember me token for storage.
      *
-     * Deliberately fast. Bcrypt exists to slow down guessing of low-entropy
-     * secrets; a remember me token is 32 bytes from random_bytes(), so there is
-     * nothing to guess and the two bcrypt runs a rotation needed - one to
-     * verify, one to hash the replacement, a quarter of a second each on the
-     * hosts this runs on - bought no security. They only held a worker thread
-     * for half a second on every remembered-session request. A keyed SHA-256
-     * compared with hash_equals() gives the same protection against a stolen
-     * database at a cost that does not show up in a trace.
+     * Deliberately fast. The token is 32 bytes from random_bytes(), not a
+     * guessable secret, so bcrypt's cost bought no security here - only latency
+     * on every remembered-session request. A keyed SHA-256 compared with
+     * hash_equals() gives the same protection against a stolen database.
      *
      * @param string $token The raw token from the cookie.
      * @return string The hex-encoded hash to store in token_hash.
@@ -207,15 +198,12 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
     }
 
     /**
-     * Verifies a presented token against a stored hash.
+     * Verifies a presented token against a stored hash, accepting either scheme.
      *
-     * Accepts both schemes so that tokens issued before the switch keep
-     * working: a password_hash() digest is self-describing ("$2y$...", or
-     * "$argon2..." if the default ever changed), while a current hash is 64
-     * hex characters and so can never start with "$". Rotation rewrites the
-     * row with the current scheme, so the legacy branch drains itself within
-     * one token lifetime (TOKEN_EXPIRY_DAYS) of the deploy and can then be
-     * removed.
+     * A password_hash() digest always starts with "$" (e.g. "$2y$..."); a current
+     * hash is 64 hex characters and never does. Rotation rewrites the row with
+     * the current scheme, so this legacy branch can go once every token issued
+     * before the switch has expired (TOKEN_EXPIRY_DAYS).
      *
      * @param string $token The raw token from the cookie.
      * @param string $storedHash The hash stored in token_hash.
@@ -231,8 +219,7 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
             : hash_equals($storedHash, self::hashToken($token));
         $elapsedMs = (hrtime(true) - $startedAt) / 1_000_000;
 
-        // A regression here is invisible in a trace otherwise: the cost sits
-        // between the SELECT and the UPDATE, where nothing else is recorded.
+        // Logged because the cost is otherwise invisible: it sits between the SELECT and the UPDATE.
         $this->logger?->debug('Remember token hash verified', [
             'scheme' => $legacy ? 'password_hash' : 'hmac-sha256',
             'valid' => $valid,
