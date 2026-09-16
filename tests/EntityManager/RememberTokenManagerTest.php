@@ -232,8 +232,10 @@ class RememberTokenManagerTest extends TestCase
 
         $this->assertArrayHasKey('series', $result);
         $this->assertArrayHasKey('token', $result);
-        // Verify that encryptedKey property was set (should be a non-empty string)
-        $this->assertIsString($tokenMock->encryptedKey ?? '');
+        // Decrypting with the returned token has to give the key back: asserting the
+        // property is a string passes just as well when nothing was encrypted at all.
+        $this->assertNotNull($tokenMock->encryptedKey);
+        $this->assertSame($encryptionKey, $this->decryptWithToken($tokenMock->encryptedKey, $result['token']));
     }
 
     public function testCreateTokenWithNullEncryptionKeyDoesNotSetEncryptedKey(): void
@@ -463,12 +465,38 @@ class RememberTokenManagerTest extends TestCase
 
         $this->entityFactoryMock->method('create')->willReturn($tokenMock);
 
-        $startedAt = hrtime(true);
-        $result = $this->manager->validateAndRotateToken('test-series', $originalToken);
-        $elapsedMs = (hrtime(true) - $startedAt) / 1_000_000;
+        // Best of five, so a scheduling hiccup on a shared runner cannot redden this;
+        // one bcrypt pair could not come in under the bound on any of the five.
+        $bestMs = INF;
+        for ($run = 0; $run < 5; $run++) {
+            $tokenMock->tokenHash = RememberTokenManager::hashToken($originalToken);
 
-        $this->assertNotNull($result);
-        $this->assertLessThan(5.0, $elapsedMs, sprintf('Validation took %.3f ms', $elapsedMs));
+            $startedAt = hrtime(true);
+            $result = $this->manager->validateAndRotateToken('test-series', $originalToken);
+            $bestMs = min($bestMs, (hrtime(true) - $startedAt) / 1_000_000);
+
+            $this->assertNotNull($result);
+        }
+
+        $this->assertLessThan(5.0, $bestMs, sprintf('Validation took %.3f ms', $bestMs));
+    }
+
+    /**
+     * Decrypts what encryptWithToken() wrote, to check a stored encrypted_key.
+     *
+     * @param string $encryptedData The stored value, IV prepended.
+     * @param string $token The raw token the key was derived from.
+     * @return string|false The decrypted data, or false if it does not decrypt.
+     */
+    private function decryptWithToken(string $encryptedData, string $token): string|false
+    {
+        return openssl_decrypt(
+            substr($encryptedData, 16),
+            'aes-256-cbc',
+            hash('sha256', $token, true),
+            OPENSSL_RAW_DATA,
+            substr($encryptedData, 0, 16)
+        );
     }
 
     /**
