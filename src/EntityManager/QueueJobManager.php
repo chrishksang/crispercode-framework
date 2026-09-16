@@ -25,28 +25,23 @@ class QueueJobManager extends EntityManagerBase
     }
 
     /**
-     * Number of times a lost claim race is retried before the caller is told
-     * there is nothing pending. A loser only ever loses to a winner, so one
-     * more look is nearly always enough; the bound is there so a pathological
-     * pile-up of workers cannot spin here instead of returning to the poll
-     * loop.
+     * Retries for a lost claim race before falling back to the reclaim path.
+     * A loser only ever loses to a winner, so one more look is nearly always
+     * enough; the cap just keeps a pile-up of workers from spinning here.
      */
     private const CLAIM_ATTEMPTS = 3;
 
     /**
      * Atomically claim the next available job from a queue.
      *
-     * The claim is the conditional UPDATE below, and nothing else: exactly one
-     * caller can move a row out of `pending`, and affectedRows() tells that
-     * caller whether it was the one who did. Losing the race is normal and
-     * costs another look, not a job.
+     * The claim is the conditional UPDATE below and nothing else: only one
+     * caller can move a row out of `pending`, and affectedRows() tells it
+     * whether it was that caller.
      *
-     * Deliberately transaction-free. Wrapping the poll in one made every
-     * empty poll open a write transaction, and in WAL mode writers do not
-     * block readers but do block writers: three idle workers on a shared
-     * sqlite file were taking a write lock roughly once a second between
-     * them, against the same file the web container commits sessions,
-     * remember-token refreshes and queue pushes to.
+     * Transaction-free on purpose. Wrapping the poll in one made every empty
+     * poll take a write lock, and in WAL mode writers block writers - three
+     * idle workers were doing that roughly once a second between them,
+     * against the same file the web container commits to.
      *
      * @param string $queue Queue name
      * @param int $timeout Reservation timeout in seconds

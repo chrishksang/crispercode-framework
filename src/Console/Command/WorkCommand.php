@@ -26,13 +26,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 )]
 class WorkCommand extends Command
 {
-    /**
-     * Empty polls tolerated at the full poll rate before backing off.
-     *
-     * Low enough that a worker that has just drained its queue keeps checking
-     * briskly for the work that usually follows, high enough that a burst
-     * arriving mid-backoff is not what sets the pace.
-     */
+    /** Empty polls tolerated at the full poll rate before backing off. */
     private const EMPTY_POLLS_BEFORE_BACKOFF = 5;
 
     private bool $shouldQuit = false;
@@ -170,16 +164,12 @@ class WorkCommand extends Command
     }
 
     /**
-     * How long to sleep after an unbroken run of empty polls.
+     * Sleep length after a run of empty polls: the configured rate for the
+     * first EMPTY_POLLS_BEFORE_BACKOFF, then doubling up to $maxSleep. A poll
+     * is two indexed SELECTs against a file other containers also write to, so
+     * a queue that has stayed quiet is worth polling less often.
      *
-     * A poll is cheap but not free - it is two indexed SELECTs against a file
-     * every other container is also writing to - and a queue that has been
-     * quiet for twenty seconds is usually quiet for minutes. So the first few
-     * empty polls keep the configured rate and the rest double up to
-     * $maxSleep, which a single claimed job resets.
-     *
-     * Public and static because the arithmetic is the part worth testing, and
-     * testing it through the loop would mean actually sleeping.
+     * Static so the arithmetic can be tested without actually sleeping.
      */
     public static function idleSleepSeconds(int $sleep, int $maxSleep, int $consecutiveEmptyPolls): int
     {

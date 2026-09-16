@@ -223,10 +223,8 @@ class QueueJobManagerTest extends TestCase
     }
 
     /**
-     * The reason this file exists at all: an idle worker polling a queue must
-     * not open a write transaction on a database every other container is
-     * writing to. Asserted against a mock because "did not start a
-     * transaction" is a statement about the calls, not about the rows.
+     * Asserted against a mock: "no transaction was opened" is a statement
+     * about the calls, not about the rows a real connection would leave.
      */
     public function testEmptyPollOpensNoTransaction(): void
     {
