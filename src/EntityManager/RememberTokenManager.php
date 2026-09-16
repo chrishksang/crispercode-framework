@@ -6,6 +6,9 @@ namespace CrisperCode\EntityManager;
 
 use CrisperCode\Attribute\EntityManagerAttribute;
 use CrisperCode\Entity\RememberToken;
+use CrisperCode\EntityFactory;
+use MeekroDB;
+use Psr\Log\LoggerInterface;
 
 /**
  * Manager for Remember Me tokens.
@@ -27,6 +30,36 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
      * Token expiration in days.
      */
     private const TOKEN_EXPIRY_DAYS = 30;
+
+    /**
+     * Key for the token hash HMAC.
+     *
+     * Not secret - it is domain separation, keeping this hash independent of the
+     * AES key encryptWithToken() derives from the same token via
+     * hash('sha256', $token, true). Without it a leaked token_hash would double
+     * as that key. Changing it invalidates every stored hash, which reads as
+     * theft and revokes the tokens it is checked against.
+     */
+    private const TOKEN_HASH_KEY = 'crispercode/remember-token-hash/v1';
+
+    /**
+     * Optional logger for verification timing.
+     */
+    private ?LoggerInterface $logger;
+
+    /**
+     * RememberTokenManager constructor.
+     *
+     * @param MeekroDB $db Database connection.
+     * @param EntityFactory $entityFactory Entity factory instance.
+     * @param LoggerInterface|null $logger Optional logger for verification timing.
+     */
+    public function __construct(MeekroDB $db, EntityFactory $entityFactory, ?LoggerInterface $logger = null)
+    {
+        parent::__construct($db, $entityFactory);
+
+        $this->logger = $logger;
+    }
 
     /**
      * Creates a new remember me token for a user.
@@ -51,7 +84,7 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
         $rememberToken = $this->entityFactory->create(RememberToken::class);
         $rememberToken->userId = $userId;
         $rememberToken->series = $series;
-        $rememberToken->tokenHash = password_hash($token, PASSWORD_DEFAULT);
+        $rememberToken->tokenHash = self::hashToken($token);
         $rememberToken->setCreatedAtNow();
         $rememberToken->setExpiresIn(self::TOKEN_EXPIRY_DAYS);
         $rememberToken->userAgent = $userAgent !== null ? substr($userAgent, 0, 500) : null;
@@ -107,7 +140,7 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
         }
 
         // Verify token hash
-        if (!password_verify($token, $rememberToken->tokenHash)) {
+        if (!$this->verifyTokenHash($token, $rememberToken->tokenHash)) {
             // Token mismatch with valid series = possible theft!
             // Revoke all tokens for this user as a security measure
             $this->revokeAllForUser($rememberToken->userId);
@@ -122,7 +155,8 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
 
         // Token is valid - rotate it
         $newToken = bin2hex(random_bytes(32));
-        $rememberToken->tokenHash = password_hash($newToken, PASSWORD_DEFAULT);
+        // Rotation always writes the current scheme, so a legacy row migrates on first use.
+        $rememberToken->tokenHash = self::hashToken($newToken);
         $rememberToken->touch();
         $rememberToken->setExpiresIn(self::TOKEN_EXPIRY_DAYS);
 
@@ -145,6 +179,54 @@ class RememberTokenManager extends EntityManagerBase implements EntityManagerInt
             'newToken' => $newToken,
             'encryptionKey' => $encryptionKey,
         ];
+    }
+
+    /**
+     * Hashes a remember me token for storage.
+     *
+     * Deliberately fast. The token is 32 bytes from random_bytes(), not a
+     * guessable secret, so bcrypt's cost bought no security here - only latency
+     * on every remembered-session request. A keyed SHA-256 compared with
+     * hash_equals() gives the same protection against a stolen database.
+     *
+     * @param string $token The raw token from the cookie.
+     * @return string The hex-encoded hash to store in token_hash.
+     */
+    public static function hashToken(string $token): string
+    {
+        return hash_hmac('sha256', $token, self::TOKEN_HASH_KEY);
+    }
+
+    /**
+     * Verifies a presented token against a stored hash, accepting either scheme.
+     *
+     * A password_hash() digest always starts with "$" (e.g. "$2y$..."); a current
+     * hash is 64 hex characters and never does. Rotation rewrites the row with
+     * the current scheme, so this legacy branch can go once every token issued
+     * before the switch has expired (TOKEN_EXPIRY_DAYS).
+     *
+     * @param string $token The raw token from the cookie.
+     * @param string $storedHash The hash stored in token_hash.
+     * @return bool True if the token matches.
+     */
+    private function verifyTokenHash(string $token, string $storedHash): bool
+    {
+        $legacy = str_starts_with($storedHash, '$');
+
+        $startedAt = hrtime(true);
+        $valid = $legacy
+            ? password_verify($token, $storedHash)
+            : hash_equals($storedHash, self::hashToken($token));
+        $elapsedMs = (hrtime(true) - $startedAt) / 1_000_000;
+
+        // Logged because the cost is otherwise invisible: it sits between the SELECT and the UPDATE.
+        $this->logger?->debug('Remember token hash verified', [
+            'scheme' => $legacy ? 'password_hash' : 'hmac-sha256',
+            'valid' => $valid,
+            'duration_ms' => round($elapsedMs, 3),
+        ]);
+
+        return $valid;
     }
 
     /**
